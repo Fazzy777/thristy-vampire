@@ -4,6 +4,9 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local Teams = game:GetService("Teams")
 local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then
     warn("Could not find LocalPlayer.")
@@ -11,7 +14,6 @@ if not LocalPlayer then
 end
 
 local MainModule = require(ReplicatedStorage:WaitForChild("Main"))
-repeat task.wait() until MainModule.Loaded
 local Network = MainModule.Network 
 
 if LocalPlayer.PlayerGui:FindFirstChild("SilverCollectorMenu") then
@@ -137,11 +139,12 @@ local isMasterEnabled, isExpanded, isDragging = false, false, false
 local isCollecting = false 
 local dragStart, startPos = nil, nil
 local consoleHistory, MAX_CONSOLE_LINES = {}, 15
-local FLY_SPEED, SEARCH_RADIUS = 80, 2000
+local FLY_SPEED, SEARCH_RADIUS = 150, 2000
 local AXIS_ALIGNMENT_THRESHOLD, FINAL_ARRIVAL_DISTANCE = 2, 6
 local isFlyingToTarget, currentTarget, lastTarget, flightPhase = false, nil, nil, 1
 local espTransparency, espColor = 0.4, Color3.fromRGB(57, 255, 20)
 local character, hrp, humanoid, bodyGyro, bodyVelocity
+local noSilverTimer = 0
 
 local function logToConsole(message)
     table.insert(consoleHistory, 1, "> " .. message)
@@ -212,10 +215,90 @@ local function initializeCharacterComponents()
     end
 
     logToConsole("Character ready.")
+
+    if LocalPlayer.Team == nil then
+        Network:FireServer("TeamEvent", "RequestJoin", {Team = "Humans"})
+        task.wait(5)
+        if LocalPlayer.Team == nil then
+            logToConsole("Human team full, joining Vampire team.")
+            Network:FireServer("TeamEvent", "RequestJoin", {Team = "Vampires"})
+        end
+    end
+
     return true
 end
 
-local function autoCollectLoop()
+local function hopServer()
+    local PlaceID = game.PlaceId
+    local AllIDs = {}
+    local foundAnything = ""
+    local actualHour = os.date("!*t").hour
+    local Deleted = false
+    local File = pcall(function()
+        AllIDs = game:GetService('HttpService'):JSONDecode(readfile("NotSameServers.json"))
+    end)
+    if not File then
+        table.insert(AllIDs, actualHour)
+        writefile("NotSameServers.json", game:GetService('HttpService'):JSONEncode(AllIDs))
+    end
+    local function TPReturner()
+        local Site;
+        if foundAnything == "" then
+            Site = game.HttpService:JSONDecode(game:HttpGet('https://games.roblox.com/v1/games/' .. PlaceID .. '/servers/Public?sortOrder=Asc&limit=100'))
+        else
+            Site = game.HttpService:JSONDecode(game:HttpGet('https://games.roblox.com/v1/games/' .. PlaceID .. '/servers/Public?sortOrder=Asc&limit=100&cursor=' .. foundAnything))
+        end
+        local ID = ""
+        if Site.nextPageCursor and Site.nextPageCursor ~= "null" and Site.nextPageCursor ~= nil then
+            foundAnything = Site.nextPageCursor
+        end
+        local num = 0;
+        for i,v in pairs(Site.data) do
+            local Possible = true
+            ID = tostring(v.id)
+            if tonumber(v.maxPlayers) > tonumber(v.playing) then
+                for _,Existing in pairs(AllIDs) do
+                    if num ~= 0 then
+                        if ID == tostring(Existing) then
+                            Possible = false
+                        end
+                    else
+                        if tonumber(actualHour) ~= tonumber(Existing) then
+                            local delFile = pcall(function()
+                                delfile("NotSameServers.json")
+                                AllIDs = {}
+                                table.insert(AllIDs, actualHour)
+                            end)
+                        end
+                    end
+                    num = num + 1
+                end
+                if Possible == true then
+                    table.insert(AllIDs, ID)
+                    wait()
+                    pcall(function()
+                        writefile("NotSameServers.json", game:GetService('HttpService'):JSONEncode(AllIDs))
+                        wait()
+                        logToConsole("Hopping to server: " .. ID)
+                        game:GetService("TeleportService"):TeleportToPlaceInstance(PlaceID, ID, game.Players.LocalPlayer)
+                    end)
+                    wait(4)
+                end
+            end
+        end
+    end
+
+    while wait() do
+        pcall(function()
+            TPReturner()
+            if foundAnything ~= "" then
+                TPReturner()
+            end
+        end)
+    end
+end
+
+local function autoCollectLoop(delta)
     if not isMasterEnabled or not hrp or not hrp.Parent then return end
 
     humanoid.PlatformStand = true
@@ -230,8 +313,16 @@ local function autoCollectLoop()
             end
         end
         if closestTarget then
+            noSilverTimer = 0
             currentTarget, isFlyingToTarget, flightPhase = closestTarget, true, 1
             logToConsole("Silver found, flying started.")
+        else
+            noSilverTimer = noSilverTimer + delta
+            if noSilverTimer > 2 then
+                logToConsole("No silver found for 2 seconds. Hopping server...")
+                hopServer()
+                noSilverTimer = 0
+            end
         end
     end
 
@@ -317,12 +408,16 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
     end
 end)
 
-RunService.Heartbeat:Connect(function() if isMasterEnabled then pcall(autoCollectLoop) end end)
+RunService.Heartbeat:Connect(function(delta) if isMasterEnabled then pcall(autoCollectLoop, delta) end end)
 
 logToConsole("Autofarm loaded. Press 'K' to hide/show.")
 character, hrp, humanoid = LocalPlayer.Character, LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart"), LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
 initializeEsp()
 updateMasterButton()
+
+isMasterEnabled = true
+updateMasterButton()
+initializeCharacterComponents()
 
 task.spawn(function()
     while true do
@@ -333,4 +428,4 @@ task.spawn(function()
         end
         if count > 0 then logToConsole(string.format("Destroyed %d 'Lava' part(s).", count)) end
     end
-end)
+end)  more fast collect the silver game thirty vampire on roblox
