@@ -428,4 +428,4 @@ task.spawn(function()
         end
         if count > 0 then logToConsole(string.format("Destroyed %d 'Lava' part(s).", count)) end
     end
-end)  more fast collect the silver game thirty vampire on roblox
+end)
